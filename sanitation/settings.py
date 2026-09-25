@@ -119,7 +119,9 @@ SPECTACULAR_SETTINGS = {
         "* 同一问题不同角度拍摄只计扣一次（照片挂接到已有事件）；\n"
         "* 已整改后同一位置复发 = 新事件、新处罚；\n"
         "* 扣分归属按**事件发生时**的合同责任区间，与录入时间无关；\n"
-        "* 逾期升级基于可注入时钟；复核通过锁定处罚版本，更正只能追加新版本。"
+        "* 逾期升级基于可注入时钟；复核通过锁定处罚版本，更正只能追加新版本。\n"
+        "* 证据封存包：对某笔扣分的全部证据（照片文件摘要/位置时间/候选判定/整改/当前处罚版本）\n"
+        "  生成不可变清单；封存后的变化只能派生显式关联的补充/替代包；支持导出与离线校验。"
     ),
     "VERSION": "1.0.0",
     "ENUM_NAME_OVERRIDES": {
@@ -128,6 +130,8 @@ SPECTACULAR_SETTINGS = {
         "CandidateStatusEnum": "assessment.models.DuplicateCandidate.Status",
         "PenaltyStatusEnum": "assessment.models.PenaltyUnit.Status",
         "PenaltyVersionKindEnum": "assessment.models.PenaltyVersion.Kind",
+        "PackageStatusEnum": "assessment.models.EvidencePackage.Status",
+        "PackageKindEnum": "assessment.models.EvidencePackage.Kind",
     },
 }
 

@@ -9,6 +9,7 @@ from assessment.models import (
     CleaningContract,
     DuplicateCandidate,
     EscalationRecord,
+    EvidencePackage,
     EvidencePhoto,
     PenaltyUnit,
     PenaltyVersion,
@@ -19,6 +20,7 @@ from assessment.models import (
 )
 from assessment.services.duplicates import generate_candidates_for_photo
 from assessment.services.phash import compute_phash_hex
+from assessment.services.sealing import package_is_stale
 
 
 class RoadGridSerializer(serializers.ModelSerializer):
@@ -162,11 +164,57 @@ class EventBriefSerializer(serializers.ModelSerializer):
         ]
 
 
+class EvidencePackageBriefSerializer(serializers.ModelSerializer):
+    """封存包摘要（嵌在处罚追溯详情里，沿链展示）。"""
+
+    kind_display = serializers.CharField(source="get_kind_display", read_only=True)
+    status_display = serializers.CharField(source="get_status_display", read_only=True)
+    is_stale = serializers.SerializerMethodField()
+
+    class Meta:
+        model = EvidencePackage
+        fields = [
+            "id", "package_no", "kind", "kind_display", "status", "status_display",
+            "parent", "sealed_version", "manifest_hash", "sealed_at", "sealed_by",
+            "is_stale", "verified_at",
+        ]
+        read_only_fields = fields
+
+    @extend_schema_field(serializers.BooleanField())
+    def get_is_stale(self, obj) -> bool:
+        return package_is_stale(obj)
+
+
+class EvidencePackageSerializer(EvidencePackageBriefSerializer):
+    """封存包详情：含完整不可变清单、校验报告与后继包。"""
+
+    children = EvidencePackageBriefSerializer(many=True, read_only=True)
+    parent_package_no = serializers.CharField(source="parent.package_no", read_only=True, default=None)
+
+    class Meta(EvidencePackageBriefSerializer.Meta):
+        fields = EvidencePackageBriefSerializer.Meta.fields + [
+            "penalty", "parent_package_no", "note", "manifest", "verify_report",
+            "children", "created_at",
+        ]
+        read_only_fields = fields
+
+
+class SealRequestSerializer(serializers.Serializer):
+    note = serializers.CharField(required=False, allow_blank=True, default="", max_length=512)
+    actor = serializers.CharField(required=False, default="system", max_length=64)
+    now = serializers.DateTimeField(required=False, help_text="可选：注入封存时间")
+
+
+class VerifyOfflineSerializer(serializers.Serializer):
+    archive = serializers.FileField(help_text="导出的封存包 ZIP")
+
+
 class PenaltyUnitSerializer(serializers.ModelSerializer):
     event = EventBriefSerializer(read_only=True)
     versions = PenaltyVersionSerializer(many=True, read_only=True)
     escalations = EscalationRecordSerializer(many=True, read_only=True)
     reviews = ReviewRecordSerializer(many=True, read_only=True)
+    packages = EvidencePackageBriefSerializer(many=True, read_only=True)
     status_display = serializers.CharField(source="get_status_display", read_only=True)
     locked_version_no = serializers.SerializerMethodField()
 
@@ -176,7 +224,7 @@ class PenaltyUnitSerializer(serializers.ModelSerializer):
             "id", "penalty_no", "event", "contract", "contractor_name",
             "points", "escalation_level", "status", "status_display",
             "locked_version", "locked_version_no",
-            "versions", "escalations", "reviews", "created_at",
+            "versions", "escalations", "reviews", "packages", "created_at",
         ]
         read_only_fields = fields
 

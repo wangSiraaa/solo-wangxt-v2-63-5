@@ -53,6 +53,21 @@ class PhotoAlreadyLinked(DomainError):
     default_detail = "照片已关联事件，不能重复立案"
 
 
+class PackageNotActive(DomainError):
+    status_code = 409
+    default_detail = "只能基于当前活动的封存包（链头）创建补充/替代包"
+
+
+class PackageExportFailed(DomainError):
+    status_code = 409
+    default_detail = "证据文件缺失或摘要校验失败，无法导出完整封存包"
+
+
+class InvalidExportArchive(DomainError):
+    status_code = 400
+    default_detail = "封存包导出文件无效"
+
+
 def api_exception_handler(exc, context):
     """把 DomainError 转成 DRF 的标准错误响应体。"""
     from rest_framework.exceptions import APIException

@@ -10,6 +10,8 @@
                      PenaltyUnit 1:1（唯一扣分单元，归属发生时的合同）
                               │
               PenaltyVersion（只追加、不可变）/ ReviewRecord / EscalationRecord
+                              │
+                   EvidencePackage（证据封存包：不可变清单 + 补充/替代链）
 """
 import uuid
 
@@ -309,3 +311,81 @@ class ReviewRecord(models.Model):
         verbose_name = "复核记录"
         verbose_name_plural = verbose_name
         ordering = ["-reviewed_at"]
+
+
+class EvidencePackage(TimeStamped):
+    """
+    证据封存包：对某笔扣分（处罚单元）在某时刻的完整证据链做不可变快照。
+
+    * 封存时生成不可变清单 manifest（全部关联照片 + 文件 SHA-256 摘要 +
+      关键元数据 + 候选判定 + 整改记录 + 当前处罚版本），清单本身再算
+      manifest_hash；封存后 manifest 永不修改；
+    * 封存后发生补拍 / 整改 / 升级 / 更正，旧包一律不动，只能通过
+      supplement（补充包）/ replace（替代包）生成显式关联（parent）的新包，
+      旧包状态随之变为 superseded（已补充/已替代）；
+    * 同一处罚单元至多一个“活动包”（pending/sealed），由数据库部分唯一
+      约束保证——重复封存与并发请求只会得到同一个活动包；
+    * 校验只重写本行的 status / verify_report：文件摘要不符时标记
+      verify_failed，绝不回写事件、处罚或候选判定。
+    """
+
+    class Status(models.TextChoices):
+        PENDING = "pending", "待封存"
+        SEALED = "sealed", "已封存"
+        SUPERSEDED = "superseded", "已补充/已替代"
+        VERIFY_FAILED = "verify_failed", "校验失败"
+
+    class Kind(models.TextChoices):
+        ORIGINAL = "original", "原始封存"
+        SUPPLEMENT = "supplement", "补充包"
+        REPLACEMENT = "replacement", "替代包"
+
+    #: 活动状态：同一处罚单元在这些状态下至多一个包
+    ACTIVE_STATUSES = (Status.PENDING, Status.SEALED)
+
+    package_no = models.CharField("封存包编号", max_length=32, unique=True, editable=False)
+    penalty = models.ForeignKey(
+        PenaltyUnit, on_delete=models.PROTECT, related_name="packages", verbose_name="处罚单元",
+    )
+    kind = models.CharField("封存类型", max_length=16, choices=Kind.choices, default=Kind.ORIGINAL)
+    status = models.CharField("状态", max_length=16, choices=Status.choices, default=Status.PENDING)
+    parent = models.ForeignKey(
+        "self", on_delete=models.PROTECT, related_name="children",
+        null=True, blank=True, verbose_name="被补充/替代的封存包",
+    )
+    sealed_version = models.ForeignKey(
+        PenaltyVersion, on_delete=models.PROTECT, related_name="sealed_by_packages",
+        null=True, blank=True, verbose_name="封存时的当前处罚版本",
+    )
+    manifest = models.JSONField("不可变清单（封存后不再修改）")
+    manifest_hash = models.CharField("清单SHA-256", max_length=64, editable=False)
+    sealed_at = models.DateTimeField("封存时间(注入时钟)", null=True, blank=True)
+    sealed_by = models.CharField("封存人", max_length=64, blank=True, default="")
+    note = models.CharField("封存说明", max_length=512, blank=True)
+    verified_at = models.DateTimeField("最近校验时间", null=True, blank=True)
+    verify_report = models.JSONField("最近校验报告", null=True, blank=True)
+
+    class Meta:
+        verbose_name = "证据封存包"
+        verbose_name_plural = verbose_name
+        ordering = ["created_at", "id"]
+        constraints = [
+            # 同一处罚单元至多一个活动包（待封存/已封存）——并发与重复请求的硬保证
+            models.UniqueConstraint(
+                fields=["penalty"],
+                condition=models.Q(status__in=["pending", "sealed"]),
+                name="uniq_active_evidence_package",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["penalty", "status"]),
+            models.Index(fields=["status", "kind"]),
+        ]
+
+    def save(self, *args, **kwargs):
+        if not self.package_no:
+            self.package_no = _new_id("EP")
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"{self.package_no}({self.get_kind_display()}/{self.get_status_display()})"

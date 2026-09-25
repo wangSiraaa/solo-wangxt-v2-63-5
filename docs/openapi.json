@@ -3,7 +3,7 @@
     "info": {
         "title": "街道环卫考核 API",
         "version": "1.0.0",
-        "description": "道路网格 / 保洁合同 / 问题事件 / 证据照片 / 处罚单元管理。\n\n核心规则：\n* 照片感知哈希(pHash)只用于生成**疑似重复候选**，是否同一问题由人工结合位置、时间判断；\n* 同一问题不同角度拍摄只计扣一次（照片挂接到已有事件）；\n* 已整改后同一位置复发 = 新事件、新处罚；\n* 扣分归属按**事件发生时**的合同责任区间，与录入时间无关；\n* 逾期升级基于可注入时钟；复核通过锁定处罚版本，更正只能追加新版本。"
+        "description": "道路网格 / 保洁合同 / 问题事件 / 证据照片 / 处罚单元管理。\n\n核心规则：\n* 照片感知哈希(pHash)只用于生成**疑似重复候选**，是否同一问题由人工结合位置、时间判断；\n* 同一问题不同角度拍摄只计扣一次（照片挂接到已有事件）；\n* 已整改后同一位置复发 = 新事件、新处罚；\n* 扣分归属按**事件发生时**的合同责任区间，与录入时间无关；\n* 逾期升级基于可注入时钟；复核通过锁定处罚版本，更正只能追加新版本。\n* 证据封存包：对某笔扣分的全部证据（照片文件摘要/位置时间/候选判定/整改/当前处罚版本）\n  生成不可变清单；封存后的变化只能派生显式关联的补充/替代包；支持导出与离线校验。"
     },
     "paths": {
         "/api/candidates/": {
@@ -617,7 +617,7 @@
         "/api/events/": {
             "get": {
                 "operationId": "events_list",
-                "description": "问题事件：只读 + 整改回调。",
+                "description": "问题事件：只读 + 整改回调 + 证据封存入口。",
                 "parameters": [
                     {
                         "in": "query",
@@ -708,7 +708,7 @@
         "/api/events/{id}/": {
             "get": {
                 "operationId": "events_retrieve",
-                "description": "问题事件：只读 + 整改回调。",
+                "description": "问题事件：只读 + 整改回调 + 证据封存入口。",
                 "parameters": [
                     {
                         "in": "path",
@@ -798,6 +798,76 @@
                             "application/json": {
                                 "schema": {
                                     "$ref": "#/components/schemas/ProblemEvent"
+                                }
+                            }
+                        },
+                        "description": ""
+                    }
+                }
+            }
+        },
+        "/api/events/{id}/seal/": {
+            "post": {
+                "operationId": "events_seal_create",
+                "description": "对事件对应的处罚单元建立证据封存包（与 /api/penalties/{id}/seal/ 等价）。",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "id",
+                        "schema": {
+                            "type": "integer"
+                        },
+                        "description": "标识此 问题事件 的 唯一整数值。",
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "events"
+                ],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/SealRequest"
+                            }
+                        },
+                        "application/x-www-form-urlencoded": {
+                            "schema": {
+                                "$ref": "#/components/schemas/SealRequest"
+                            }
+                        },
+                        "multipart/form-data": {
+                            "schema": {
+                                "$ref": "#/components/schemas/SealRequest"
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "cookieAuth": []
+                    },
+                    {
+                        "basicAuth": []
+                    },
+                    {}
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/EvidencePackage"
+                                }
+                            }
+                        },
+                        "description": ""
+                    },
+                    "201": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/EvidencePackage"
                                 }
                             }
                         },
@@ -1085,6 +1155,377 @@
                 }
             }
         },
+        "/api/packages/": {
+            "get": {
+                "operationId": "packages_list",
+                "description": "证据封存包：只读检索 + 补充/替代/校验/导出/离线校验动作。\n不提供修改、删除（405）；封存后清单不可变，后续变化只能派生新包。",
+                "parameters": [
+                    {
+                        "in": "query",
+                        "name": "kind",
+                        "schema": {
+                            "type": "string",
+                            "title": "封存类型",
+                            "enum": [
+                                "original",
+                                "replacement",
+                                "supplement"
+                            ]
+                        },
+                        "description": "* `original` - 原始封存\n* `supplement` - 补充包\n* `replacement` - 替代包"
+                    },
+                    {
+                        "name": "page",
+                        "required": false,
+                        "in": "query",
+                        "description": "分页结果集中的页码。",
+                        "schema": {
+                            "type": "integer"
+                        }
+                    },
+                    {
+                        "in": "query",
+                        "name": "penalty",
+                        "schema": {
+                            "type": "integer"
+                        }
+                    },
+                    {
+                        "in": "query",
+                        "name": "status",
+                        "schema": {
+                            "type": "string",
+                            "title": "状态",
+                            "enum": [
+                                "pending",
+                                "sealed",
+                                "superseded",
+                                "verify_failed"
+                            ]
+                        },
+                        "description": "* `pending` - 待封存\n* `sealed` - 已封存\n* `superseded` - 已补充/已替代\n* `verify_failed` - 校验失败"
+                    }
+                ],
+                "tags": [
+                    "packages"
+                ],
+                "security": [
+                    {
+                        "cookieAuth": []
+                    },
+                    {
+                        "basicAuth": []
+                    },
+                    {}
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/PaginatedEvidencePackageList"
+                                }
+                            }
+                        },
+                        "description": ""
+                    }
+                }
+            }
+        },
+        "/api/packages/{id}/": {
+            "get": {
+                "operationId": "packages_retrieve",
+                "description": "证据封存包：只读检索 + 补充/替代/校验/导出/离线校验动作。\n不提供修改、删除（405）；封存后清单不可变，后续变化只能派生新包。",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "id",
+                        "schema": {
+                            "type": "integer"
+                        },
+                        "description": "标识此 证据封存包 的 唯一整数值。",
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "packages"
+                ],
+                "security": [
+                    {
+                        "cookieAuth": []
+                    },
+                    {
+                        "basicAuth": []
+                    },
+                    {}
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/EvidencePackage"
+                                }
+                            }
+                        },
+                        "description": ""
+                    }
+                }
+            }
+        },
+        "/api/packages/{id}/export/": {
+            "get": {
+                "operationId": "packages_export_retrieve",
+                "description": "导出封存包 ZIP（manifest.json + manifest.sha256 + 全部证据文件）。\n确定性字节，中断后重试得到相同内容；文件缺失/摘要不符时拒绝导出（409）。",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "id",
+                        "schema": {
+                            "type": "integer"
+                        },
+                        "description": "标识此 证据封存包 的 唯一整数值。",
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "packages"
+                ],
+                "security": [
+                    {
+                        "cookieAuth": []
+                    },
+                    {
+                        "basicAuth": []
+                    },
+                    {}
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/zip": {
+                                "schema": {
+                                    "type": "string",
+                                    "format": "binary"
+                                }
+                            }
+                        },
+                        "description": ""
+                    }
+                }
+            }
+        },
+        "/api/packages/{id}/replace/": {
+            "post": {
+                "operationId": "packages_replace_create",
+                "description": "基于当前活动包生成替代包（完整重封当前状态），旧包置为已替代。",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "id",
+                        "schema": {
+                            "type": "integer"
+                        },
+                        "description": "标识此 证据封存包 的 唯一整数值。",
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "packages"
+                ],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/SealRequest"
+                            }
+                        },
+                        "application/x-www-form-urlencoded": {
+                            "schema": {
+                                "$ref": "#/components/schemas/SealRequest"
+                            }
+                        },
+                        "multipart/form-data": {
+                            "schema": {
+                                "$ref": "#/components/schemas/SealRequest"
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "cookieAuth": []
+                    },
+                    {
+                        "basicAuth": []
+                    },
+                    {}
+                ],
+                "responses": {
+                    "201": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/EvidencePackage"
+                                }
+                            }
+                        },
+                        "description": ""
+                    }
+                }
+            }
+        },
+        "/api/packages/{id}/supplement/": {
+            "post": {
+                "operationId": "packages_supplement_create",
+                "description": "基于当前活动包生成补充包（补拍/整改/升级/更正后），旧包置为已补充。",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "id",
+                        "schema": {
+                            "type": "integer"
+                        },
+                        "description": "标识此 证据封存包 的 唯一整数值。",
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "packages"
+                ],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/SealRequest"
+                            }
+                        },
+                        "application/x-www-form-urlencoded": {
+                            "schema": {
+                                "$ref": "#/components/schemas/SealRequest"
+                            }
+                        },
+                        "multipart/form-data": {
+                            "schema": {
+                                "$ref": "#/components/schemas/SealRequest"
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "cookieAuth": []
+                    },
+                    {
+                        "basicAuth": []
+                    },
+                    {}
+                ],
+                "responses": {
+                    "201": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/EvidencePackage"
+                                }
+                            }
+                        },
+                        "description": ""
+                    }
+                }
+            }
+        },
+        "/api/packages/{id}/verify/": {
+            "post": {
+                "operationId": "packages_verify_create",
+                "description": "在线校验：重算清单哈希与全部文件摘要。\n结果只写回封存包自身状态（不符→校验失败），不影响事件/处罚/候选。",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "id",
+                        "schema": {
+                            "type": "integer"
+                        },
+                        "description": "标识此 证据封存包 的 唯一整数值。",
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "packages"
+                ],
+                "security": [
+                    {
+                        "cookieAuth": []
+                    },
+                    {
+                        "basicAuth": []
+                    },
+                    {}
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/VerifyReport"
+                                }
+                            }
+                        },
+                        "description": ""
+                    }
+                }
+            }
+        },
+        "/api/packages/verify_offline/": {
+            "post": {
+                "operationId": "packages_verify_offline_create",
+                "description": "离线校验：上传导出的 ZIP，不读数据库，仅凭包内清单与文件校验，\n并还原唯一处罚单号、事件编号与完整证据清单。",
+                "tags": [
+                    "packages"
+                ],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/VerifyOffline"
+                            }
+                        },
+                        "application/x-www-form-urlencoded": {
+                            "schema": {
+                                "$ref": "#/components/schemas/VerifyOffline"
+                            }
+                        },
+                        "multipart/form-data": {
+                            "schema": {
+                                "$ref": "#/components/schemas/VerifyOffline"
+                            }
+                        }
+                    },
+                    "required": true
+                },
+                "security": [
+                    {
+                        "cookieAuth": []
+                    },
+                    {
+                        "basicAuth": []
+                    },
+                    {}
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/VerifyReport"
+                                }
+                            }
+                        },
+                        "description": ""
+                    }
+                }
+            }
+        },
         "/api/penalties/": {
             "get": {
                 "operationId": "penalties_list",
@@ -1313,6 +1754,76 @@
                             "application/json": {
                                 "schema": {
                                     "$ref": "#/components/schemas/PenaltyUnit"
+                                }
+                            }
+                        },
+                        "description": ""
+                    }
+                }
+            }
+        },
+        "/api/penalties/{id}/seal/": {
+            "post": {
+                "operationId": "penalties_seal_create",
+                "description": "证据封存：为该处罚单元建立首个封存包（不可变清单 + 文件摘要）。\n幂等——已存在封存链时返回链头（200），重复/并发请求不会产生第二个活动包。",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "id",
+                        "schema": {
+                            "type": "integer"
+                        },
+                        "description": "标识此 处罚单元 的 唯一整数值。",
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "penalties"
+                ],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/SealRequest"
+                            }
+                        },
+                        "application/x-www-form-urlencoded": {
+                            "schema": {
+                                "$ref": "#/components/schemas/SealRequest"
+                            }
+                        },
+                        "multipart/form-data": {
+                            "schema": {
+                                "$ref": "#/components/schemas/SealRequest"
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "cookieAuth": []
+                    },
+                    {
+                        "basicAuth": []
+                    },
+                    {}
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/EvidencePackage"
+                                }
+                            }
+                        },
+                        "description": ""
+                    },
+                    "201": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/EvidencePackage"
                                 }
                             }
                         },
@@ -2150,6 +2661,241 @@
                 "type": "string",
                 "description": "* `open` - 待整改\n* `rectified` - 已整改"
             },
+            "EvidencePackage": {
+                "type": "object",
+                "description": "封存包详情：含完整不可变清单、校验报告与后继包。",
+                "properties": {
+                    "id": {
+                        "type": "integer",
+                        "readOnly": true
+                    },
+                    "package_no": {
+                        "type": "string",
+                        "readOnly": true,
+                        "title": "封存包编号"
+                    },
+                    "kind": {
+                        "allOf": [
+                            {
+                                "$ref": "#/components/schemas/PackageKindEnum"
+                            }
+                        ],
+                        "readOnly": true,
+                        "title": "封存类型"
+                    },
+                    "kind_display": {
+                        "type": "string",
+                        "readOnly": true
+                    },
+                    "status": {
+                        "allOf": [
+                            {
+                                "$ref": "#/components/schemas/PackageStatusEnum"
+                            }
+                        ],
+                        "readOnly": true,
+                        "title": "状态"
+                    },
+                    "status_display": {
+                        "type": "string",
+                        "readOnly": true
+                    },
+                    "parent": {
+                        "type": "integer",
+                        "readOnly": true,
+                        "nullable": true,
+                        "title": "被补充/替代的封存包"
+                    },
+                    "sealed_version": {
+                        "type": "integer",
+                        "readOnly": true,
+                        "nullable": true,
+                        "title": "封存时的当前处罚版本"
+                    },
+                    "manifest_hash": {
+                        "type": "string",
+                        "readOnly": true,
+                        "title": "清单SHA-256"
+                    },
+                    "sealed_at": {
+                        "type": "string",
+                        "format": "date-time",
+                        "readOnly": true,
+                        "nullable": true,
+                        "title": "封存时间(注入时钟)"
+                    },
+                    "sealed_by": {
+                        "type": "string",
+                        "readOnly": true,
+                        "title": "封存人"
+                    },
+                    "is_stale": {
+                        "type": "boolean",
+                        "readOnly": true
+                    },
+                    "verified_at": {
+                        "type": "string",
+                        "format": "date-time",
+                        "readOnly": true,
+                        "nullable": true,
+                        "title": "最近校验时间"
+                    },
+                    "penalty": {
+                        "type": "integer",
+                        "readOnly": true,
+                        "title": "处罚单元"
+                    },
+                    "parent_package_no": {
+                        "type": "string",
+                        "readOnly": true
+                    },
+                    "note": {
+                        "type": "string",
+                        "readOnly": true,
+                        "title": "封存说明"
+                    },
+                    "manifest": {
+                        "readOnly": true,
+                        "title": "不可变清单（封存后不再修改）"
+                    },
+                    "verify_report": {
+                        "readOnly": true,
+                        "nullable": true,
+                        "title": "最近校验报告"
+                    },
+                    "children": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/components/schemas/EvidencePackageBrief"
+                        },
+                        "readOnly": true
+                    },
+                    "created_at": {
+                        "type": "string",
+                        "format": "date-time",
+                        "readOnly": true,
+                        "title": "创建时间"
+                    }
+                },
+                "required": [
+                    "children",
+                    "created_at",
+                    "id",
+                    "is_stale",
+                    "kind",
+                    "kind_display",
+                    "manifest",
+                    "manifest_hash",
+                    "note",
+                    "package_no",
+                    "parent",
+                    "parent_package_no",
+                    "penalty",
+                    "sealed_at",
+                    "sealed_by",
+                    "sealed_version",
+                    "status",
+                    "status_display",
+                    "verified_at",
+                    "verify_report"
+                ]
+            },
+            "EvidencePackageBrief": {
+                "type": "object",
+                "description": "封存包摘要（嵌在处罚追溯详情里，沿链展示）。",
+                "properties": {
+                    "id": {
+                        "type": "integer",
+                        "readOnly": true
+                    },
+                    "package_no": {
+                        "type": "string",
+                        "readOnly": true,
+                        "title": "封存包编号"
+                    },
+                    "kind": {
+                        "allOf": [
+                            {
+                                "$ref": "#/components/schemas/PackageKindEnum"
+                            }
+                        ],
+                        "readOnly": true,
+                        "title": "封存类型"
+                    },
+                    "kind_display": {
+                        "type": "string",
+                        "readOnly": true
+                    },
+                    "status": {
+                        "allOf": [
+                            {
+                                "$ref": "#/components/schemas/PackageStatusEnum"
+                            }
+                        ],
+                        "readOnly": true,
+                        "title": "状态"
+                    },
+                    "status_display": {
+                        "type": "string",
+                        "readOnly": true
+                    },
+                    "parent": {
+                        "type": "integer",
+                        "readOnly": true,
+                        "nullable": true,
+                        "title": "被补充/替代的封存包"
+                    },
+                    "sealed_version": {
+                        "type": "integer",
+                        "readOnly": true,
+                        "nullable": true,
+                        "title": "封存时的当前处罚版本"
+                    },
+                    "manifest_hash": {
+                        "type": "string",
+                        "readOnly": true,
+                        "title": "清单SHA-256"
+                    },
+                    "sealed_at": {
+                        "type": "string",
+                        "format": "date-time",
+                        "readOnly": true,
+                        "nullable": true,
+                        "title": "封存时间(注入时钟)"
+                    },
+                    "sealed_by": {
+                        "type": "string",
+                        "readOnly": true,
+                        "title": "封存人"
+                    },
+                    "is_stale": {
+                        "type": "boolean",
+                        "readOnly": true
+                    },
+                    "verified_at": {
+                        "type": "string",
+                        "format": "date-time",
+                        "readOnly": true,
+                        "nullable": true,
+                        "title": "最近校验时间"
+                    }
+                },
+                "required": [
+                    "id",
+                    "is_stale",
+                    "kind",
+                    "kind_display",
+                    "manifest_hash",
+                    "package_no",
+                    "parent",
+                    "sealed_at",
+                    "sealed_by",
+                    "sealed_version",
+                    "status",
+                    "status_display",
+                    "verified_at"
+                ]
+            },
             "EvidencePhoto": {
                 "type": "object",
                 "properties": {
@@ -2246,6 +2992,25 @@
                     "phash"
                 ]
             },
+            "PackageKindEnum": {
+                "enum": [
+                    "original",
+                    "supplement",
+                    "replacement"
+                ],
+                "type": "string",
+                "description": "* `original` - 原始封存\n* `supplement` - 补充包\n* `replacement` - 替代包"
+            },
+            "PackageStatusEnum": {
+                "enum": [
+                    "pending",
+                    "sealed",
+                    "superseded",
+                    "verify_failed"
+                ],
+                "type": "string",
+                "description": "* `pending` - 待封存\n* `sealed` - 已封存\n* `superseded` - 已补充/已替代\n* `verify_failed` - 校验失败"
+            },
             "PaginatedCleaningContractList": {
                 "type": "object",
                 "required": [
@@ -2335,6 +3100,37 @@
                         "type": "array",
                         "items": {
                             "$ref": "#/components/schemas/EscalationRecord"
+                        }
+                    }
+                }
+            },
+            "PaginatedEvidencePackageList": {
+                "type": "object",
+                "required": [
+                    "count",
+                    "results"
+                ],
+                "properties": {
+                    "count": {
+                        "type": "integer",
+                        "example": 123
+                    },
+                    "next": {
+                        "type": "string",
+                        "nullable": true,
+                        "format": "uri",
+                        "example": "http://api.example.org/accounts/?page=4"
+                    },
+                    "previous": {
+                        "type": "string",
+                        "nullable": true,
+                        "format": "uri",
+                        "example": "http://api.example.org/accounts/?page=2"
+                    },
+                    "results": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/components/schemas/EvidencePackage"
                         }
                     }
                 }
@@ -2745,6 +3541,13 @@
                         },
                         "readOnly": true
                     },
+                    "packages": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/components/schemas/EvidencePackageBrief"
+                        },
+                        "readOnly": true
+                    },
                     "created_at": {
                         "type": "string",
                         "format": "date-time",
@@ -2762,6 +3565,7 @@
                     "id",
                     "locked_version",
                     "locked_version_no",
+                    "packages",
                     "penalty_no",
                     "points",
                     "reviews",
@@ -3241,6 +4045,84 @@
                     "code",
                     "geom",
                     "id"
+                ]
+            },
+            "SealRequest": {
+                "type": "object",
+                "properties": {
+                    "note": {
+                        "type": "string",
+                        "default": "",
+                        "maxLength": 512
+                    },
+                    "actor": {
+                        "type": "string",
+                        "default": "system",
+                        "maxLength": 64
+                    },
+                    "now": {
+                        "type": "string",
+                        "format": "date-time",
+                        "description": "可选：注入封存时间"
+                    }
+                }
+            },
+            "VerifyOffline": {
+                "type": "object",
+                "properties": {
+                    "archive": {
+                        "type": "string",
+                        "format": "uri",
+                        "description": "导出的封存包 ZIP"
+                    }
+                },
+                "required": [
+                    "archive"
+                ]
+            },
+            "VerifyReport": {
+                "type": "object",
+                "properties": {
+                    "ok": {
+                        "type": "boolean"
+                    },
+                    "package_no": {
+                        "type": "string",
+                        "nullable": true
+                    },
+                    "penalty_no": {
+                        "type": "string",
+                        "nullable": true
+                    },
+                    "event_no": {
+                        "type": "string",
+                        "nullable": true
+                    },
+                    "manifest_hash": {
+                        "type": "string"
+                    },
+                    "files_total": {
+                        "type": "integer"
+                    },
+                    "files_ok": {
+                        "type": "integer"
+                    },
+                    "checks": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "additionalProperties": {}
+                        }
+                    }
+                },
+                "required": [
+                    "checks",
+                    "event_no",
+                    "files_ok",
+                    "files_total",
+                    "ok",
+                    "package_no",
+                    "penalty_no"
                 ]
             }
         },
