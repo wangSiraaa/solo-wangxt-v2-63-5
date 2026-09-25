@@ -309,3 +309,223 @@ class ReviewRecord(models.Model):
         verbose_name = "复核记录"
         verbose_name_plural = verbose_name
         ordering = ["-reviewed_at"]
+
+
+class SealPackage(TimeStamped):
+    """
+    证据封存包（不可变清单）。
+
+    封存时把某事件/处罚在该时刻的全部关联照片、文件摘要、关键元数据、
+    候选判定、整改记录与当前处罚版本固化为一份带哈希的清单(manifest)。
+
+    不变量：
+    * 封存后新增补拍 / 整改 / 升级 / 更正**不得改旧包**，只能形成显式关联的
+      补充包(supplement)或替代包(superseded)；
+    * 同一处罚(事件)在任意时刻至多有一个“活动包”(is_active=True)；
+      重复封存/并发请求要么返回既有活动包，要么在唯一约束上失败后回退；
+    * 文件摘要不符只把包标记为 verification_failed（并写 SealVerification），
+      绝不改变事件、处罚或自动合并候选；
+    * 状态：pending(待封存) / sealed(已封存) / supplemented(已补充,历史包) /
+      verification_failed(校验失败,仍是活动包) / superseded(已替代,历史包)。
+    """
+
+    class Status(models.TextChoices):
+        PENDING = "pending", "待封存"
+        SEALED = "sealed", "已封存"
+        SUPPLEMENTED = "supplemented", "已补充（历史包）"
+        VERIFICATION_FAILED = "verification_failed", "校验失败"
+        SUPERSEDED = "superceded", "已替代（历史包）"
+
+    class Kind(models.TextChoices):
+        INITIAL = "initial", "首次封存"
+        SUPPLEMENT = "supplement", "补充包"
+        REPLACEMENT = "replacement", "替代包"
+
+    class Subject(models.TextChoices):
+        EVENT = "event", "事件封存"
+        PENALTY = "penalty", "处罚封存"
+
+    package_no = models.CharField("封存包编号", max_length=32, unique=True, editable=False)
+    subject_kind = models.CharField("封存对象类型", max_length=16, choices=Subject.choices)
+    event = models.ForeignKey(
+        ProblemEvent, on_delete=models.PROTECT, related_name="seal_packages", verbose_name="问题事件",
+    )
+    penalty = models.ForeignKey(
+        PenaltyUnit, on_delete=models.PROTECT, related_name="seal_packages", verbose_name="处罚单元",
+    )
+    package_kind = models.CharField("包类型", max_length=16, choices=Kind.choices, default=Kind.INITIAL)
+    status = models.CharField("状态", max_length=24, choices=Status.choices, default=Status.PENDING, db_index=True)
+    is_active = models.BooleanField("是否为当前活动包", default=True)
+    # 显式关联：补充包/替代包指向它所依据的上一个活动包；旧包行本身不变
+    parent = models.ForeignKey(
+        "self", on_delete=models.PROTECT, null=True, blank=True,
+        related_name="children", verbose_name="上一版本包",
+    )
+    replaces = models.ForeignKey(
+        "self", on_delete=models.PROTECT, null=True, blank=True,
+        related_name="replaced_by_set", verbose_name="被替代的包",
+    )
+    relation_note = models.CharField("补充/替代说明", max_length=512, blank=True, default="")
+    # 客户端幂等键：同键重试落在同一个包上（不要求全局唯一，仅同处罚内唯一）
+    client_token = models.CharField("客户端幂等键", max_length=64, blank=True, default="", db_index=True)
+    # 规范化清单（canonical JSON）与摘要；pending 阶段为空，封存成功后写入且不再变化
+    manifest = models.JSONField("封存清单", null=True, blank=True, editable=False)
+    manifest_digest = models.CharField("清单摘要(sha256)", max_length=64, blank=True, default="", db_index=True)
+    content_fingerprint = models.CharField(
+        "内容指纹(不含文件摘要)", max_length=64, blank=True, default="",
+        help_text="重复封存时若指纹相同则直接返回既有活动包，不产生第二个活动包",
+    )
+    sealed_at = models.DateTimeField("封存时间", null=True, blank=True)
+    sealed_by = models.CharField("封存操作人", max_length=64, blank=True, default="")
+    legacy_migrated = models.BooleanField("历史数据迁移生成", default=False)
+    missing_files = models.BooleanField("封存时即有文件缺失", default=False)
+
+    class Meta:
+        verbose_name = "证据封存包"
+        verbose_name_plural = verbose_name
+        ordering = ["-created_at"]
+        constraints = [
+            # 同一处罚至多一个活动包——重复封存与并发请求的最终防线
+            models.UniqueConstraint(
+                fields=["penalty"],
+                condition=models.Q(is_active=True),
+                name="uniq_active_seal_per_penalty",
+            ),
+            models.UniqueConstraint(
+                fields=["event"],
+                condition=models.Q(is_active=True),
+                name="uniq_active_seal_per_event",
+            ),
+            # 同一处罚 + 幂等键至多一个包（空串不参与）
+            models.UniqueConstraint(
+                fields=["penalty", "client_token"],
+                condition=~models.Q(client_token=""),
+                name="uniq_seal_penalty_token",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["penalty", "package_kind"]),
+            models.Index(fields=["status", "is_active"]),
+        ]
+
+    def save(self, *args, **kwargs):
+        if not self.package_no:
+            self.package_no = _new_id("SP")
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"{self.package_no} {self.penalty_id} {self.status}"
+
+
+class SealedFile(models.Model):
+    """封存包内每个证据文件的清单行（照片 / 整改照片 / 外部文件）。"""
+
+    class Role(models.TextChoices):
+        EVIDENCE = "evidence", "证据照片"
+        RECTIFICATION = "rectification", "整改照片"
+        ATTACHMENT = "attachment", "外部文件"
+
+    package = models.ForeignKey(
+        SealPackage, on_delete=models.PROTECT, related_name="files", verbose_name="封存包",
+    )
+    photo = models.ForeignKey(
+        EvidencePhoto, on_delete=models.PROTECT, null=True, blank=True,
+        related_name="sealed_files", verbose_name="证据照片",
+    )
+    role = models.CharField("文件角色", max_length=16, choices=Role.choices)
+    rel_path = models.CharField("包内相对路径", max_length=512)
+    storage_path = models.CharField("存储路径", max_length=512, blank=True, default="")
+    filename = models.CharField("文件名", max_length=256)
+    content_type = models.CharField("内容类型", max_length=64, blank=True, default="")
+    size_bytes = models.BigIntegerField("文件大小(字节)", null=True, blank=True)
+    sha256 = models.CharField("封存时文件摘要(sha256)", max_length=64, blank=True, default="")
+    missing_at_seal = models.BooleanField("封存时文件缺失", default=False)
+    # 冗余关键元数据，便于列表/追溯直接查询
+    phash = models.CharField("感知哈希(hex)", max_length=64, blank=True, default="")
+    captured_at = models.DateTimeField("拍摄时间", null=True, blank=True)
+    lng = models.FloatField("经度", null=True, blank=True)
+    lat = models.FloatField("纬度", null=True, blank=True)
+
+    class Meta:
+        verbose_name = "封存清单文件"
+        verbose_name_plural = verbose_name
+        constraints = [
+            models.UniqueConstraint(fields=["package", "rel_path"], name="uniq_sealed_file_path"),
+        ]
+        indexes = [models.Index(fields=["photo"]), models.Index(fields=["sha256"])]
+        ordering = ["rel_path"]
+
+
+class SealVerification(models.Model):
+    """
+    封存包校验记录（在线/离线/导出复核都落一行）。
+    校验失败仅更新包状态与本表，不允许触碰事件/处罚/候选。
+    """
+
+    class Result(models.TextChoices):
+        VALID = "valid", "校验通过"
+        INVALID = "invalid", "校验失败"
+
+    class Source(models.TextChoices):
+        ONLINE = "online", "在线校验"
+        OFFLINE = "offline", "离线校验"
+        EXPORT = "export", "导出校验"
+
+    package = models.ForeignKey(
+        SealPackage, on_delete=models.PROTECT, related_name="verifications", verbose_name="封存包",
+    )
+    source = models.CharField("校验来源", max_length=16, choices=Source.choices)
+    result = models.CharField("校验结果", max_length=16, choices=Result.choices)
+    manifest_ok = models.BooleanField("清单摘要一致", default=False)
+    checked_files = models.PositiveIntegerField("已校验文件数", default=0)
+    mismatch_files = models.JSONField("摘要不符文件", default=list, blank=True)
+    missing_files = models.JSONField("缺失文件", default=list, blank=True)
+    extra_files = models.JSONField("包外多余文件", default=list, blank=True)
+    detail = models.CharField("说明", max_length=512, blank=True, default="")
+    actor = models.CharField("校验人/任务", max_length=64, blank=True, default="")
+    created_at = models.DateTimeField("校验时间", auto_now_add=True)
+
+    class Meta:
+        verbose_name = "封存校验记录"
+        verbose_name_plural = verbose_name
+        ordering = ["-created_at"]
+
+
+class SealExportJob(models.Model):
+    """
+    封存包导出任务：生成可离线校验的 tar 包（内含文件与校验器）。
+
+    以 package + client_token 幂等；构建过程按文件推进 cursor，
+    中断后用同一 client_token 重试可续作，不重复生成活动导出。
+    """
+
+    class Status(models.TextChoices):
+        PENDING = "pending", "待导出"
+        BUILDING = "building", "构建中"
+        COMPLETED = "completed", "已完成"
+        FAILED = "failed", "失败"
+
+    package = models.ForeignKey(
+        SealPackage, on_delete=models.PROTECT, related_name="export_jobs", verbose_name="封存包",
+    )
+    client_token = models.CharField("客户端幂等键", max_length=64)
+    status = models.CharField("状态", max_length=16, choices=Status.choices, default=Status.PENDING, db_index=True)
+    bundle_path = models.CharField("导出包路径", max_length=512, blank=True, default="")
+    bundle_digest = models.CharField("导出包摘要(sha256)", max_length=64, blank=True, default="")
+    size_bytes = models.BigIntegerField("导出包大小", null=True, blank=True)
+    total_files = models.PositiveIntegerField("待导出文件数", default=0)
+    done_files = models.PositiveIntegerField("已导出文件数", default=0)
+    cursor = models.CharField("续作游标(最后写入的 rel_path)", max_length=512, blank=True, default="")
+    error = models.CharField("失败原因", max_length=512, blank=True, default="")
+    created_by = models.CharField("请求人", max_length=64, blank=True, default="")
+    created_at = models.DateTimeField("创建时间", auto_now_add=True)
+    updated_at = models.DateTimeField("更新时间", auto_now=True)
+    completed_at = models.DateTimeField("完成时间", null=True, blank=True)
+
+    class Meta:
+        verbose_name = "封存导出任务"
+        verbose_name_plural = verbose_name
+        constraints = [
+            models.UniqueConstraint(fields=["package", "client_token"], name="uniq_export_token"),
+        ]
+        ordering = ["-created_at"]

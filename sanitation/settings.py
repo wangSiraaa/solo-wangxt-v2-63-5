@@ -128,6 +128,13 @@ SPECTACULAR_SETTINGS = {
         "CandidateStatusEnum": "assessment.models.DuplicateCandidate.Status",
         "PenaltyStatusEnum": "assessment.models.PenaltyUnit.Status",
         "PenaltyVersionKindEnum": "assessment.models.PenaltyVersion.Kind",
+        "SealStatusEnum": "assessment.models.SealPackage.Status",
+        "SealKindEnum": "assessment.models.SealPackage.Kind",
+        "SealSubjectEnum": "assessment.models.SealPackage.Subject",
+        "SealedFileRoleEnum": "assessment.models.SealedFile.Role",
+        "SealVerificationResultEnum": "assessment.models.SealVerification.Result",
+        "SealVerificationSourceEnum": "assessment.models.SealVerification.Source",
+        "SealExportStatusEnum": "assessment.models.SealExportJob.Status",
     },
 }
 

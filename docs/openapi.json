@@ -1870,6 +1870,848 @@
                     }
                 }
             }
+        },
+        "/api/seal-exports/": {
+            "get": {
+                "operationId": "seal_exports_list",
+                "description": "导出任务：查询进度、续作（中断重试）。",
+                "parameters": [
+                    {
+                        "in": "query",
+                        "name": "client_token",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    {
+                        "in": "query",
+                        "name": "package",
+                        "schema": {
+                            "type": "integer"
+                        }
+                    },
+                    {
+                        "name": "page",
+                        "required": false,
+                        "in": "query",
+                        "description": "分页结果集中的页码。",
+                        "schema": {
+                            "type": "integer"
+                        }
+                    },
+                    {
+                        "in": "query",
+                        "name": "status",
+                        "schema": {
+                            "type": "string",
+                            "title": "状态",
+                            "enum": [
+                                "building",
+                                "completed",
+                                "failed",
+                                "pending"
+                            ]
+                        },
+                        "description": "* `pending` - 待导出\n* `building` - 构建中\n* `completed` - 已完成\n* `failed` - 失败"
+                    }
+                ],
+                "tags": [
+                    "seal-exports"
+                ],
+                "security": [
+                    {
+                        "cookieAuth": []
+                    },
+                    {
+                        "basicAuth": []
+                    },
+                    {}
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/PaginatedSealExportJobList"
+                                }
+                            }
+                        },
+                        "description": ""
+                    }
+                }
+            }
+        },
+        "/api/seal-exports/{id}/": {
+            "get": {
+                "operationId": "seal_exports_retrieve",
+                "description": "导出任务：查询进度、续作（中断重试）。",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "id",
+                        "schema": {
+                            "type": "integer"
+                        },
+                        "description": "标识此 封存导出任务 的 唯一整数值。",
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "seal-exports"
+                ],
+                "security": [
+                    {
+                        "cookieAuth": []
+                    },
+                    {
+                        "basicAuth": []
+                    },
+                    {}
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/SealExportJob"
+                                }
+                            }
+                        },
+                        "description": ""
+                    }
+                }
+            }
+        },
+        "/api/seal-exports/{id}/run/": {
+            "post": {
+                "operationId": "seal_exports_run_create",
+                "description": "续作导出（中断后用同一任务即可，无需新建）。",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "id",
+                        "schema": {
+                            "type": "integer"
+                        },
+                        "description": "标识此 封存导出任务 的 唯一整数值。",
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "seal-exports"
+                ],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/SealExportJob"
+                            }
+                        },
+                        "application/x-www-form-urlencoded": {
+                            "schema": {
+                                "$ref": "#/components/schemas/SealExportJob"
+                            }
+                        },
+                        "multipart/form-data": {
+                            "schema": {
+                                "$ref": "#/components/schemas/SealExportJob"
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "cookieAuth": []
+                    },
+                    {
+                        "basicAuth": []
+                    },
+                    {}
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/SealExportJob"
+                                }
+                            }
+                        },
+                        "description": ""
+                    }
+                }
+            }
+        },
+        "/api/seals/": {
+            "get": {
+                "operationId": "seals_list",
+                "description": "证据封存包：只读检索 + 封存/补充/替代/校验/导出/离线校验动作。\n\n不变量：\n* 封存后新增补拍/整改/升级/更正不改旧包，只产生显式关联的补充包或替代包；\n* 重复封存/并发请求至多一个活动包（内容未变返回原包）；\n* 文件摘要不符只标记 verification_failed 并留痕，不改业务链、不合并候选。",
+                "parameters": [
+                    {
+                        "in": "query",
+                        "name": "event",
+                        "schema": {
+                            "type": "integer"
+                        }
+                    },
+                    {
+                        "in": "query",
+                        "name": "is_active",
+                        "schema": {
+                            "type": "boolean"
+                        }
+                    },
+                    {
+                        "in": "query",
+                        "name": "legacy_migrated",
+                        "schema": {
+                            "type": "boolean"
+                        }
+                    },
+                    {
+                        "in": "query",
+                        "name": "package_kind",
+                        "schema": {
+                            "type": "string",
+                            "title": "包类型",
+                            "enum": [
+                                "initial",
+                                "replacement",
+                                "supplement"
+                            ]
+                        },
+                        "description": "* `initial` - 首次封存\n* `supplement` - 补充包\n* `replacement` - 替代包"
+                    },
+                    {
+                        "name": "page",
+                        "required": false,
+                        "in": "query",
+                        "description": "分页结果集中的页码。",
+                        "schema": {
+                            "type": "integer"
+                        }
+                    },
+                    {
+                        "in": "query",
+                        "name": "penalty",
+                        "schema": {
+                            "type": "integer"
+                        }
+                    },
+                    {
+                        "in": "query",
+                        "name": "status",
+                        "schema": {
+                            "type": "string",
+                            "title": "状态",
+                            "enum": [
+                                "pending",
+                                "sealed",
+                                "superceded",
+                                "supplemented",
+                                "verification_failed"
+                            ]
+                        },
+                        "description": "* `pending` - 待封存\n* `sealed` - 已封存\n* `supplemented` - 已补充（历史包）\n* `verification_failed` - 校验失败\n* `superceded` - 已替代（历史包）"
+                    }
+                ],
+                "tags": [
+                    "seals"
+                ],
+                "security": [
+                    {
+                        "cookieAuth": []
+                    },
+                    {
+                        "basicAuth": []
+                    },
+                    {}
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/PaginatedSealPackageList"
+                                }
+                            }
+                        },
+                        "description": ""
+                    }
+                }
+            },
+            "post": {
+                "operationId": "seals_create",
+                "description": "封存（或在内容已变化时建立补充/替代包）。\n\n传 event 或 penalty 之一；client_token 用于重复/并发请求幂等。\n内容未变的重复封存返回 200 + 既有活动包；新封存返回 201。",
+                "tags": [
+                    "seals"
+                ],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/SealPackage"
+                            }
+                        },
+                        "application/x-www-form-urlencoded": {
+                            "schema": {
+                                "$ref": "#/components/schemas/SealPackage"
+                            }
+                        },
+                        "multipart/form-data": {
+                            "schema": {
+                                "$ref": "#/components/schemas/SealPackage"
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "cookieAuth": []
+                    },
+                    {
+                        "basicAuth": []
+                    },
+                    {}
+                ],
+                "responses": {
+                    "201": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/SealPackage"
+                                }
+                            }
+                        },
+                        "description": ""
+                    }
+                }
+            }
+        },
+        "/api/seals/{id}/": {
+            "get": {
+                "operationId": "seals_retrieve",
+                "description": "证据封存包：只读检索 + 封存/补充/替代/校验/导出/离线校验动作。\n\n不变量：\n* 封存后新增补拍/整改/升级/更正不改旧包，只产生显式关联的补充包或替代包；\n* 重复封存/并发请求至多一个活动包（内容未变返回原包）；\n* 文件摘要不符只标记 verification_failed 并留痕，不改业务链、不合并候选。",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "id",
+                        "schema": {
+                            "type": "integer"
+                        },
+                        "description": "标识此 证据封存包 的 唯一整数值。",
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "seals"
+                ],
+                "security": [
+                    {
+                        "cookieAuth": []
+                    },
+                    {
+                        "basicAuth": []
+                    },
+                    {}
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/SealPackage"
+                                }
+                            }
+                        },
+                        "description": ""
+                    }
+                }
+            }
+        },
+        "/api/seals/{id}/exports/": {
+            "post": {
+                "operationId": "seals_exports_create",
+                "description": "创建并（默认）推进导出任务，产出可离线校验的 tar 包。\nclient_token 幂等：中断后同键重试只续作、产出同一个 bundle。",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "id",
+                        "schema": {
+                            "type": "integer"
+                        },
+                        "description": "标识此 证据封存包 的 唯一整数值。",
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "seals"
+                ],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/SealPackage"
+                            }
+                        },
+                        "application/x-www-form-urlencoded": {
+                            "schema": {
+                                "$ref": "#/components/schemas/SealPackage"
+                            }
+                        },
+                        "multipart/form-data": {
+                            "schema": {
+                                "$ref": "#/components/schemas/SealPackage"
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "cookieAuth": []
+                    },
+                    {
+                        "basicAuth": []
+                    },
+                    {}
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/SealPackage"
+                                }
+                            }
+                        },
+                        "description": ""
+                    }
+                }
+            }
+        },
+        "/api/seals/{id}/exports/{job_id}/download/": {
+            "get": {
+                "operationId": "seals_exports_download_retrieve",
+                "description": "下载已完成的离线封存 tar 包。",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "id",
+                        "schema": {
+                            "type": "integer"
+                        },
+                        "description": "标识此 证据封存包 的 唯一整数值。",
+                        "required": true
+                    },
+                    {
+                        "in": "path",
+                        "name": "job_id",
+                        "schema": {
+                            "type": "string",
+                            "pattern": "^[0-9]+$"
+                        },
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "seals"
+                ],
+                "security": [
+                    {
+                        "cookieAuth": []
+                    },
+                    {
+                        "basicAuth": []
+                    },
+                    {}
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/SealPackage"
+                                }
+                            }
+                        },
+                        "description": ""
+                    }
+                }
+            }
+        },
+        "/api/seals/{id}/finalize/": {
+            "post": {
+                "operationId": "seals_finalize_create",
+                "description": "完成待封存(pending)包：计算文件摘要、固化不可变清单。",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "id",
+                        "schema": {
+                            "type": "integer"
+                        },
+                        "description": "标识此 证据封存包 的 唯一整数值。",
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "seals"
+                ],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/SealPackage"
+                            }
+                        },
+                        "application/x-www-form-urlencoded": {
+                            "schema": {
+                                "$ref": "#/components/schemas/SealPackage"
+                            }
+                        },
+                        "multipart/form-data": {
+                            "schema": {
+                                "$ref": "#/components/schemas/SealPackage"
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "cookieAuth": []
+                    },
+                    {
+                        "basicAuth": []
+                    },
+                    {}
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/SealPackage"
+                                }
+                            }
+                        },
+                        "description": ""
+                    }
+                }
+            }
+        },
+        "/api/seals/{id}/lineage/": {
+            "get": {
+                "operationId": "seals_lineage_retrieve",
+                "description": "追溯详情：沿 parent 链给出首包到当前活动包的完整封存谱系。",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "id",
+                        "schema": {
+                            "type": "integer"
+                        },
+                        "description": "标识此 证据封存包 的 唯一整数值。",
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "seals"
+                ],
+                "security": [
+                    {
+                        "cookieAuth": []
+                    },
+                    {
+                        "basicAuth": []
+                    },
+                    {}
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/SealPackage"
+                                }
+                            }
+                        },
+                        "description": ""
+                    }
+                }
+            }
+        },
+        "/api/seals/{id}/replace/": {
+            "post": {
+                "operationId": "seals_replace_create",
+                "description": "建立替代包（显式更正封存口径）。旧包转 superseded（不改内容），\n新包 parent/replaces 指向旧包。",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "id",
+                        "schema": {
+                            "type": "integer"
+                        },
+                        "description": "标识此 证据封存包 的 唯一整数值。",
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "seals"
+                ],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/SealPackage"
+                            }
+                        },
+                        "application/x-www-form-urlencoded": {
+                            "schema": {
+                                "$ref": "#/components/schemas/SealPackage"
+                            }
+                        },
+                        "multipart/form-data": {
+                            "schema": {
+                                "$ref": "#/components/schemas/SealPackage"
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "cookieAuth": []
+                    },
+                    {
+                        "basicAuth": []
+                    },
+                    {}
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/SealPackage"
+                                }
+                            }
+                        },
+                        "description": ""
+                    }
+                }
+            }
+        },
+        "/api/seals/{id}/supplement/": {
+            "post": {
+                "operationId": "seals_supplement_create",
+                "description": "建立补充包：封存后新增补拍/整改/升级/更正后调用。\n旧包转 supplemented（不改内容），新包 parent 指向旧包。",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "id",
+                        "schema": {
+                            "type": "integer"
+                        },
+                        "description": "标识此 证据封存包 的 唯一整数值。",
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "seals"
+                ],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/SealPackage"
+                            }
+                        },
+                        "application/x-www-form-urlencoded": {
+                            "schema": {
+                                "$ref": "#/components/schemas/SealPackage"
+                            }
+                        },
+                        "multipart/form-data": {
+                            "schema": {
+                                "$ref": "#/components/schemas/SealPackage"
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "cookieAuth": []
+                    },
+                    {
+                        "basicAuth": []
+                    },
+                    {}
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/SealPackage"
+                                }
+                            }
+                        },
+                        "description": ""
+                    }
+                }
+            }
+        },
+        "/api/seals/{id}/verify/": {
+            "post": {
+                "operationId": "seals_verify_create",
+                "description": "在线校验：复算清单与全部证据文件摘要。\n\n失败只把活动包标记 verification_failed 并记录；绝不修改事件/处罚/候选。",
+                "parameters": [
+                    {
+                        "in": "path",
+                        "name": "id",
+                        "schema": {
+                            "type": "integer"
+                        },
+                        "description": "标识此 证据封存包 的 唯一整数值。",
+                        "required": true
+                    }
+                ],
+                "tags": [
+                    "seals"
+                ],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/SealPackage"
+                            }
+                        },
+                        "application/x-www-form-urlencoded": {
+                            "schema": {
+                                "$ref": "#/components/schemas/SealPackage"
+                            }
+                        },
+                        "multipart/form-data": {
+                            "schema": {
+                                "$ref": "#/components/schemas/SealPackage"
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "cookieAuth": []
+                    },
+                    {
+                        "basicAuth": []
+                    },
+                    {}
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/SealPackage"
+                                }
+                            }
+                        },
+                        "description": ""
+                    }
+                }
+            }
+        },
+        "/api/seals/migrate/": {
+            "post": {
+                "operationId": "seals_migrate_create",
+                "description": "历史数据迁移：为尚无封存包的处罚批量补建 legacy 封存包。\n幂等可续跑，中断重跑只补缺口，绝不产生第二个活动包。",
+                "tags": [
+                    "seals"
+                ],
+                "requestBody": {
+                    "content": {
+                        "application/json": {
+                            "schema": {
+                                "$ref": "#/components/schemas/SealPackage"
+                            }
+                        },
+                        "application/x-www-form-urlencoded": {
+                            "schema": {
+                                "$ref": "#/components/schemas/SealPackage"
+                            }
+                        },
+                        "multipart/form-data": {
+                            "schema": {
+                                "$ref": "#/components/schemas/SealPackage"
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "cookieAuth": []
+                    },
+                    {
+                        "basicAuth": []
+                    },
+                    {}
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/SealPackage"
+                                }
+                            }
+                        },
+                        "description": ""
+                    }
+                }
+            }
+        },
+        "/api/seals/offline-verify/": {
+            "post": {
+                "operationId": "seals_offline_verify_create",
+                "description": "离线校验：上传导出的 .tar 封存包，在服务端复算全部摘要（算法与\nverify_offline.py 完全一致），并还原唯一处罚与完整证据视图。\n该动作不读取/修改任何业务数据。",
+                "tags": [
+                    "seals"
+                ],
+                "requestBody": {
+                    "content": {
+                        "multipart/form-data": {
+                            "schema": {
+                                "$ref": "#/components/schemas/SealPackage"
+                            }
+                        },
+                        "application/x-www-form-urlencoded": {
+                            "schema": {
+                                "$ref": "#/components/schemas/SealPackage"
+                            }
+                        }
+                    }
+                },
+                "security": [
+                    {
+                        "cookieAuth": []
+                    },
+                    {
+                        "basicAuth": []
+                    },
+                    {}
+                ],
+                "responses": {
+                    "200": {
+                        "content": {
+                            "application/json": {
+                                "schema": {
+                                    "$ref": "#/components/schemas/SealPackage"
+                                }
+                            }
+                        },
+                        "description": ""
+                    }
+                }
+            }
         }
     },
     "components": {
@@ -2521,6 +3363,68 @@
                         "type": "array",
                         "items": {
                             "$ref": "#/components/schemas/RoadGrid"
+                        }
+                    }
+                }
+            },
+            "PaginatedSealExportJobList": {
+                "type": "object",
+                "required": [
+                    "count",
+                    "results"
+                ],
+                "properties": {
+                    "count": {
+                        "type": "integer",
+                        "example": 123
+                    },
+                    "next": {
+                        "type": "string",
+                        "nullable": true,
+                        "format": "uri",
+                        "example": "http://api.example.org/accounts/?page=4"
+                    },
+                    "previous": {
+                        "type": "string",
+                        "nullable": true,
+                        "format": "uri",
+                        "example": "http://api.example.org/accounts/?page=2"
+                    },
+                    "results": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/components/schemas/SealExportJob"
+                        }
+                    }
+                }
+            },
+            "PaginatedSealPackageList": {
+                "type": "object",
+                "required": [
+                    "count",
+                    "results"
+                ],
+                "properties": {
+                    "count": {
+                        "type": "integer",
+                        "example": 123
+                    },
+                    "next": {
+                        "type": "string",
+                        "nullable": true,
+                        "format": "uri",
+                        "example": "http://api.example.org/accounts/?page=4"
+                    },
+                    "previous": {
+                        "type": "string",
+                        "nullable": true,
+                        "format": "uri",
+                        "example": "http://api.example.org/accounts/?page=2"
+                    },
+                    "results": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/components/schemas/SealPackage"
                         }
                     }
                 }
@@ -3242,6 +4146,683 @@
                     "geom",
                     "id"
                 ]
+            },
+            "SealExportJob": {
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "integer",
+                        "readOnly": true
+                    },
+                    "package": {
+                        "type": "integer",
+                        "readOnly": true,
+                        "title": "封存包"
+                    },
+                    "client_token": {
+                        "type": "string",
+                        "readOnly": true,
+                        "title": "客户端幂等键"
+                    },
+                    "status": {
+                        "allOf": [
+                            {
+                                "$ref": "#/components/schemas/SealExportStatusEnum"
+                            }
+                        ],
+                        "readOnly": true,
+                        "title": "状态"
+                    },
+                    "status_display": {
+                        "type": "string",
+                        "readOnly": true
+                    },
+                    "bundle_path": {
+                        "type": "string",
+                        "readOnly": true,
+                        "title": "导出包路径"
+                    },
+                    "bundle_digest": {
+                        "type": "string",
+                        "readOnly": true,
+                        "title": "导出包摘要(sha256)"
+                    },
+                    "size_bytes": {
+                        "type": "integer",
+                        "readOnly": true,
+                        "nullable": true,
+                        "title": "导出包大小"
+                    },
+                    "total_files": {
+                        "type": "integer",
+                        "readOnly": true,
+                        "title": "待导出文件数"
+                    },
+                    "done_files": {
+                        "type": "integer",
+                        "readOnly": true,
+                        "title": "已导出文件数"
+                    },
+                    "cursor": {
+                        "type": "string",
+                        "readOnly": true,
+                        "title": "续作游标(最后写入的 rel_path)"
+                    },
+                    "error": {
+                        "type": "string",
+                        "readOnly": true,
+                        "title": "失败原因"
+                    },
+                    "created_by": {
+                        "type": "string",
+                        "readOnly": true,
+                        "title": "请求人"
+                    },
+                    "created_at": {
+                        "type": "string",
+                        "format": "date-time",
+                        "readOnly": true,
+                        "title": "创建时间"
+                    },
+                    "updated_at": {
+                        "type": "string",
+                        "format": "date-time",
+                        "readOnly": true,
+                        "title": "更新时间"
+                    },
+                    "completed_at": {
+                        "type": "string",
+                        "format": "date-time",
+                        "readOnly": true,
+                        "nullable": true,
+                        "title": "完成时间"
+                    },
+                    "download_url": {
+                        "type": "string",
+                        "nullable": true,
+                        "readOnly": true
+                    }
+                },
+                "required": [
+                    "bundle_digest",
+                    "bundle_path",
+                    "client_token",
+                    "completed_at",
+                    "created_at",
+                    "created_by",
+                    "cursor",
+                    "done_files",
+                    "download_url",
+                    "error",
+                    "id",
+                    "package",
+                    "size_bytes",
+                    "status",
+                    "status_display",
+                    "total_files",
+                    "updated_at"
+                ]
+            },
+            "SealExportStatusEnum": {
+                "enum": [
+                    "pending",
+                    "building",
+                    "completed",
+                    "failed"
+                ],
+                "type": "string",
+                "description": "* `pending` - 待导出\n* `building` - 构建中\n* `completed` - 已完成\n* `failed` - 失败"
+            },
+            "SealKindEnum": {
+                "enum": [
+                    "initial",
+                    "supplement",
+                    "replacement"
+                ],
+                "type": "string",
+                "description": "* `initial` - 首次封存\n* `supplement` - 补充包\n* `replacement` - 替代包"
+            },
+            "SealPackage": {
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "integer",
+                        "readOnly": true
+                    },
+                    "package_no": {
+                        "type": "string",
+                        "readOnly": true,
+                        "title": "封存包编号"
+                    },
+                    "subject_kind": {
+                        "allOf": [
+                            {
+                                "$ref": "#/components/schemas/SealSubjectEnum"
+                            }
+                        ],
+                        "readOnly": true,
+                        "title": "封存对象类型"
+                    },
+                    "event": {
+                        "type": "integer",
+                        "readOnly": true,
+                        "title": "问题事件"
+                    },
+                    "penalty": {
+                        "type": "integer",
+                        "readOnly": true,
+                        "title": "处罚单元"
+                    },
+                    "package_kind": {
+                        "allOf": [
+                            {
+                                "$ref": "#/components/schemas/SealKindEnum"
+                            }
+                        ],
+                        "readOnly": true,
+                        "title": "包类型"
+                    },
+                    "package_kind_display": {
+                        "type": "string",
+                        "readOnly": true
+                    },
+                    "status": {
+                        "allOf": [
+                            {
+                                "$ref": "#/components/schemas/SealStatusEnum"
+                            }
+                        ],
+                        "readOnly": true,
+                        "title": "状态"
+                    },
+                    "status_display": {
+                        "type": "string",
+                        "readOnly": true
+                    },
+                    "is_active": {
+                        "type": "boolean",
+                        "readOnly": true,
+                        "title": "是否为当前活动包"
+                    },
+                    "parent": {
+                        "type": "integer",
+                        "readOnly": true,
+                        "nullable": true,
+                        "title": "上一版本包"
+                    },
+                    "parent_no": {
+                        "type": "string",
+                        "nullable": true,
+                        "readOnly": true
+                    },
+                    "replaces": {
+                        "type": "integer",
+                        "readOnly": true,
+                        "nullable": true,
+                        "title": "被替代的包"
+                    },
+                    "replaces_no": {
+                        "type": "string",
+                        "nullable": true,
+                        "readOnly": true
+                    },
+                    "relation_note": {
+                        "type": "string",
+                        "readOnly": true,
+                        "title": "补充/替代说明"
+                    },
+                    "manifest": {
+                        "readOnly": true,
+                        "nullable": true,
+                        "title": "封存清单"
+                    },
+                    "manifest_digest": {
+                        "type": "string",
+                        "readOnly": true,
+                        "title": "清单摘要(sha256)"
+                    },
+                    "content_fingerprint": {
+                        "type": "string",
+                        "readOnly": true,
+                        "title": "内容指纹(不含文件摘要)",
+                        "description": "重复封存时若指纹相同则直接返回既有活动包，不产生第二个活动包"
+                    },
+                    "sealed_at": {
+                        "type": "string",
+                        "format": "date-time",
+                        "readOnly": true,
+                        "nullable": true,
+                        "title": "封存时间"
+                    },
+                    "sealed_by": {
+                        "type": "string",
+                        "readOnly": true,
+                        "title": "封存操作人"
+                    },
+                    "legacy_migrated": {
+                        "type": "boolean",
+                        "readOnly": true,
+                        "title": "历史数据迁移生成"
+                    },
+                    "missing_files": {
+                        "type": "boolean",
+                        "readOnly": true,
+                        "title": "封存时即有文件缺失"
+                    },
+                    "files": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/components/schemas/SealedFile"
+                        },
+                        "readOnly": true
+                    },
+                    "verifications": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/components/schemas/SealVerification"
+                        },
+                        "readOnly": true
+                    },
+                    "children": {
+                        "type": "array",
+                        "items": {
+                            "$ref": "#/components/schemas/SealPackageBrief"
+                        },
+                        "readOnly": true
+                    },
+                    "created_at": {
+                        "type": "string",
+                        "format": "date-time",
+                        "readOnly": true,
+                        "title": "创建时间"
+                    }
+                },
+                "required": [
+                    "children",
+                    "content_fingerprint",
+                    "created_at",
+                    "event",
+                    "files",
+                    "id",
+                    "is_active",
+                    "legacy_migrated",
+                    "manifest",
+                    "manifest_digest",
+                    "missing_files",
+                    "package_kind",
+                    "package_kind_display",
+                    "package_no",
+                    "parent",
+                    "parent_no",
+                    "penalty",
+                    "relation_note",
+                    "replaces",
+                    "replaces_no",
+                    "sealed_at",
+                    "sealed_by",
+                    "status",
+                    "status_display",
+                    "subject_kind",
+                    "verifications"
+                ]
+            },
+            "SealPackageBrief": {
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "integer",
+                        "readOnly": true
+                    },
+                    "package_no": {
+                        "type": "string",
+                        "readOnly": true,
+                        "title": "封存包编号"
+                    },
+                    "subject_kind": {
+                        "allOf": [
+                            {
+                                "$ref": "#/components/schemas/SealSubjectEnum"
+                            }
+                        ],
+                        "readOnly": true,
+                        "title": "封存对象类型"
+                    },
+                    "event": {
+                        "type": "integer",
+                        "readOnly": true,
+                        "title": "问题事件"
+                    },
+                    "penalty": {
+                        "type": "integer",
+                        "readOnly": true,
+                        "title": "处罚单元"
+                    },
+                    "package_kind": {
+                        "allOf": [
+                            {
+                                "$ref": "#/components/schemas/SealKindEnum"
+                            }
+                        ],
+                        "readOnly": true,
+                        "title": "包类型"
+                    },
+                    "package_kind_display": {
+                        "type": "string",
+                        "readOnly": true
+                    },
+                    "status": {
+                        "allOf": [
+                            {
+                                "$ref": "#/components/schemas/SealStatusEnum"
+                            }
+                        ],
+                        "readOnly": true,
+                        "title": "状态"
+                    },
+                    "status_display": {
+                        "type": "string",
+                        "readOnly": true
+                    },
+                    "is_active": {
+                        "type": "boolean",
+                        "readOnly": true,
+                        "title": "是否为当前活动包"
+                    },
+                    "parent": {
+                        "type": "integer",
+                        "readOnly": true,
+                        "nullable": true,
+                        "title": "上一版本包"
+                    },
+                    "replaces": {
+                        "type": "integer",
+                        "readOnly": true,
+                        "nullable": true,
+                        "title": "被替代的包"
+                    },
+                    "manifest_digest": {
+                        "type": "string",
+                        "readOnly": true,
+                        "title": "清单摘要(sha256)"
+                    },
+                    "sealed_at": {
+                        "type": "string",
+                        "format": "date-time",
+                        "readOnly": true,
+                        "nullable": true,
+                        "title": "封存时间"
+                    },
+                    "sealed_by": {
+                        "type": "string",
+                        "readOnly": true,
+                        "title": "封存操作人"
+                    },
+                    "legacy_migrated": {
+                        "type": "boolean",
+                        "readOnly": true,
+                        "title": "历史数据迁移生成"
+                    },
+                    "missing_files": {
+                        "type": "boolean",
+                        "readOnly": true,
+                        "title": "封存时即有文件缺失"
+                    },
+                    "created_at": {
+                        "type": "string",
+                        "format": "date-time",
+                        "readOnly": true,
+                        "title": "创建时间"
+                    }
+                },
+                "required": [
+                    "created_at",
+                    "event",
+                    "id",
+                    "is_active",
+                    "legacy_migrated",
+                    "manifest_digest",
+                    "missing_files",
+                    "package_kind",
+                    "package_kind_display",
+                    "package_no",
+                    "parent",
+                    "penalty",
+                    "replaces",
+                    "sealed_at",
+                    "sealed_by",
+                    "status",
+                    "status_display",
+                    "subject_kind"
+                ]
+            },
+            "SealStatusEnum": {
+                "enum": [
+                    "pending",
+                    "sealed",
+                    "supplemented",
+                    "verification_failed",
+                    "superceded"
+                ],
+                "type": "string",
+                "description": "* `pending` - 待封存\n* `sealed` - 已封存\n* `supplemented` - 已补充（历史包）\n* `verification_failed` - 校验失败\n* `superceded` - 已替代（历史包）"
+            },
+            "SealSubjectEnum": {
+                "enum": [
+                    "event",
+                    "penalty"
+                ],
+                "type": "string",
+                "description": "* `event` - 事件封存\n* `penalty` - 处罚封存"
+            },
+            "SealVerification": {
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "integer",
+                        "readOnly": true
+                    },
+                    "source": {
+                        "allOf": [
+                            {
+                                "$ref": "#/components/schemas/SealVerificationSourceEnum"
+                            }
+                        ],
+                        "readOnly": true,
+                        "title": "校验来源"
+                    },
+                    "source_display": {
+                        "type": "string",
+                        "readOnly": true
+                    },
+                    "result": {
+                        "allOf": [
+                            {
+                                "$ref": "#/components/schemas/SealVerificationResultEnum"
+                            }
+                        ],
+                        "readOnly": true,
+                        "title": "校验结果"
+                    },
+                    "manifest_ok": {
+                        "type": "boolean",
+                        "readOnly": true,
+                        "title": "清单摘要一致"
+                    },
+                    "checked_files": {
+                        "type": "integer",
+                        "readOnly": true,
+                        "title": "已校验文件数"
+                    },
+                    "mismatch_files": {
+                        "readOnly": true,
+                        "title": "摘要不符文件"
+                    },
+                    "missing_files": {
+                        "readOnly": true,
+                        "title": "缺失文件"
+                    },
+                    "extra_files": {
+                        "readOnly": true,
+                        "title": "包外多余文件"
+                    },
+                    "detail": {
+                        "type": "string",
+                        "readOnly": true,
+                        "title": "说明"
+                    },
+                    "actor": {
+                        "type": "string",
+                        "readOnly": true,
+                        "title": "校验人/任务"
+                    },
+                    "created_at": {
+                        "type": "string",
+                        "format": "date-time",
+                        "readOnly": true,
+                        "title": "校验时间"
+                    }
+                },
+                "required": [
+                    "actor",
+                    "checked_files",
+                    "created_at",
+                    "detail",
+                    "extra_files",
+                    "id",
+                    "manifest_ok",
+                    "mismatch_files",
+                    "missing_files",
+                    "result",
+                    "source",
+                    "source_display"
+                ]
+            },
+            "SealVerificationResultEnum": {
+                "enum": [
+                    "valid",
+                    "invalid"
+                ],
+                "type": "string",
+                "description": "* `valid` - 校验通过\n* `invalid` - 校验失败"
+            },
+            "SealVerificationSourceEnum": {
+                "enum": [
+                    "online",
+                    "offline",
+                    "export"
+                ],
+                "type": "string",
+                "description": "* `online` - 在线校验\n* `offline` - 离线校验\n* `export` - 导出校验"
+            },
+            "SealedFile": {
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "integer",
+                        "readOnly": true
+                    },
+                    "photo": {
+                        "type": "integer",
+                        "readOnly": true,
+                        "nullable": true,
+                        "title": "证据照片"
+                    },
+                    "role": {
+                        "allOf": [
+                            {
+                                "$ref": "#/components/schemas/SealedFileRoleEnum"
+                            }
+                        ],
+                        "readOnly": true,
+                        "title": "文件角色"
+                    },
+                    "role_display": {
+                        "type": "string",
+                        "readOnly": true
+                    },
+                    "rel_path": {
+                        "type": "string",
+                        "readOnly": true,
+                        "title": "包内相对路径"
+                    },
+                    "filename": {
+                        "type": "string",
+                        "readOnly": true,
+                        "title": "文件名"
+                    },
+                    "content_type": {
+                        "type": "string",
+                        "readOnly": true,
+                        "title": "内容类型"
+                    },
+                    "size_bytes": {
+                        "type": "integer",
+                        "readOnly": true,
+                        "nullable": true,
+                        "title": "文件大小(字节)"
+                    },
+                    "sha256": {
+                        "type": "string",
+                        "readOnly": true,
+                        "title": "封存时文件摘要(sha256)"
+                    },
+                    "missing_at_seal": {
+                        "type": "boolean",
+                        "readOnly": true,
+                        "title": "封存时文件缺失"
+                    },
+                    "phash": {
+                        "type": "string",
+                        "readOnly": true,
+                        "title": "感知哈希(hex)"
+                    },
+                    "captured_at": {
+                        "type": "string",
+                        "format": "date-time",
+                        "readOnly": true,
+                        "nullable": true,
+                        "title": "拍摄时间"
+                    },
+                    "lng": {
+                        "type": "number",
+                        "format": "double",
+                        "readOnly": true,
+                        "nullable": true,
+                        "title": "经度"
+                    },
+                    "lat": {
+                        "type": "number",
+                        "format": "double",
+                        "readOnly": true,
+                        "nullable": true,
+                        "title": "纬度"
+                    }
+                },
+                "required": [
+                    "captured_at",
+                    "content_type",
+                    "filename",
+                    "id",
+                    "lat",
+                    "lng",
+                    "missing_at_seal",
+                    "phash",
+                    "photo",
+                    "rel_path",
+                    "role",
+                    "role_display",
+                    "sha256",
+                    "size_bytes"
+                ]
+            },
+            "SealedFileRoleEnum": {
+                "enum": [
+                    "evidence",
+                    "rectification",
+                    "attachment"
+                ],
+                "type": "string",
+                "description": "* `evidence` - 证据照片\n* `rectification` - 整改照片\n* `attachment` - 外部文件"
             }
         },
         "securitySchemes": {

@@ -1,6 +1,8 @@
 """API 视图。所有写操作都委托给 services 层（领域规则集中、时钟可注入）。"""
+from django.http import HttpResponse
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
+from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.response import Response
 
 from assessment.models import (
@@ -13,6 +15,9 @@ from assessment.models import (
     ProblemEvent,
     Rectification,
     RoadGrid,
+    SealExportJob,
+    SealPackage,
+    SealVerification,
 )
 from assessment.serializers import (
     CandidateDecisionSerializer,
@@ -30,6 +35,16 @@ from assessment.serializers import (
     RectificationReadSerializer,
     RectifyRequestSerializer,
     RoadGridSerializer,
+    SealCreateSerializer,
+    SealExportCreateSerializer,
+    SealExportJobSerializer,
+    SealExportRunSerializer,
+    SealFinalizeSerializer,
+    SealMigrateSerializer,
+    SealOfflineVerifySerializer,
+    SealPackageBriefSerializer,
+    SealPackageSerializer,
+    SealVerifySerializer,
 )
 from assessment.services.clock import resolve_clock
 from assessment.services.decisions import decide_candidate
@@ -37,6 +52,17 @@ from assessment.services.escalation import run_escalation
 from assessment.services.events import create_event_from_photo
 from assessment.services.penalties import correct_penalty, review_penalty
 from assessment.services.rectification import submit_rectification
+from assessment.services.seal_export import (
+    create_export_job,
+    read_bundle_bytes,
+    run_export_job,
+)
+from assessment.services.seal_verify import verify_active_package, verify_bundle_archive
+from assessment.services.sealing import (
+    finalize_seal,
+    migrate_legacy_seals,
+    seal_subject,
+)
 
 
 class RoadGridViewSet(viewsets.ModelViewSet):
@@ -254,3 +280,278 @@ class EscalationRecordViewSet(viewsets.mixins.RetrieveModelMixin,
             },
             status=status.HTTP_201_CREATED if result.created_count else status.HTTP_200_OK,
         )
+
+
+class SealPackageViewSet(viewsets.mixins.CreateModelMixin,
+                         viewsets.mixins.RetrieveModelMixin,
+                         viewsets.mixins.ListModelMixin,
+                         viewsets.GenericViewSet):
+    """
+    证据封存包：只读检索 + 封存/补充/替代/校验/导出/离线校验动作。
+
+    不变量：
+    * 封存后新增补拍/整改/升级/更正不改旧包，只产生显式关联的补充包或替代包；
+    * 重复封存/并发请求至多一个活动包（内容未变返回原包）；
+    * 文件摘要不符只标记 verification_failed 并留痕，不改业务链、不合并候选。
+    """
+
+    queryset = (
+        SealPackage.objects.select_related("event", "penalty", "parent", "replaces")
+        .prefetch_related("files", "verifications", "children")
+        .all()
+    )
+    serializer_class = SealPackageSerializer
+    filterset_fields = ["penalty", "event", "status", "is_active", "package_kind", "legacy_migrated"]
+
+    def create(self, request, *args, **kwargs):
+        """
+        封存（或在内容已变化时建立补充/替代包）。
+
+        传 event 或 penalty 之一；client_token 用于重复/并发请求幂等。
+        内容未变的重复封存返回 200 + 既有活动包；新封存返回 201。
+        """
+        payload = SealCreateSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+        data = payload.validated_data
+        if not data.get("event") and not data.get("penalty"):
+            from rest_framework import serializers
+
+            raise serializers.ValidationError({"event": "event 与 penalty 至少提供一个"})
+
+        if data.get("finalize", True):
+            result = seal_subject(
+                event=data.get("event"),
+                penalty=data.get("penalty"),
+                subject_kind=data.get("subject_kind", SealPackage.Subject.PENALTY),
+                kind=data.get("kind", SealPackage.Kind.SUPPLEMENT),
+                actor=data.get("actor", "system"),
+                note=data.get("note", ""),
+                client_token=data.get("client_token"),
+            )
+            http = status.HTTP_201_CREATED if result.created else status.HTTP_200_OK
+            return Response(SealPackageSerializer(result.package).data, status=http,
+                            headers={"Seal-Created": "1" if result.created else "0"})
+
+        from assessment.services.sealing import create_seal_request
+
+        result = create_seal_request(
+            event=data.get("event"),
+            penalty=data.get("penalty"),
+            subject_kind=data.get("subject_kind", SealPackage.Subject.PENALTY),
+            kind=data.get("kind", SealPackage.Kind.SUPPLEMENT),
+            actor=data.get("actor", "system"),
+            note=data.get("note", ""),
+            client_token=data.get("client_token"),
+        )
+        http = status.HTTP_202_ACCEPTED if result.created else status.HTTP_200_OK
+        return Response(SealPackageSerializer(result.package).data, status=http)
+
+    @action(detail=True, methods=["post"])
+    def finalize(self, request, pk=None):
+        """完成待封存(pending)包：计算文件摘要、固化不可变清单。"""
+        payload = SealFinalizeSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+        package = finalize_seal(self.get_object())
+        return Response(SealPackageSerializer(package).data, status=status.HTTP_200_OK)
+
+    @action(detail=True, methods=["post"], url_path="supplement")
+    def supplement(self, request, pk=None):
+        """
+        建立补充包：封存后新增补拍/整改/升级/更正后调用。
+        旧包转 supplemented（不改内容），新包 parent 指向旧包。
+        """
+        return self._create_related(request, SealPackage.Kind.SUPPLEMENT)
+
+    @action(detail=True, methods=["post"], url_path="replace")
+    def replace(self, request, pk=None):
+        """
+        建立替代包（显式更正封存口径）。旧包转 superseded（不改内容），
+        新包 parent/replaces 指向旧包。
+        """
+        return self._create_related(request, SealPackage.Kind.REPLACEMENT)
+
+    def _create_related(self, request, kind: str):
+        package = self.get_object()
+        actor = request.data.get("actor", "system") if isinstance(request.data, dict) else "system"
+        note = request.data.get("note", "") if isinstance(request.data, dict) else ""
+        client_token = request.data.get("client_token", "") if isinstance(request.data, dict) else ""
+        result = seal_subject(
+            penalty=package.penalty,
+            subject_kind=package.subject_kind,
+            kind=kind,
+            actor=actor,
+            note=note,
+            client_token=client_token or None,
+        )
+        http = status.HTTP_201_CREATED if result.created else status.HTTP_200_OK
+        return Response(SealPackageSerializer(result.package).data, status=http)
+
+    @action(detail=True, methods=["post"])
+    def verify(self, request, pk=None):
+        """
+        在线校验：复算清单与全部证据文件摘要。
+
+        失败只把活动包标记 verification_failed 并记录；绝不修改事件/处罚/候选。
+        """
+        payload = SealVerifySerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+        data = payload.validated_data
+        package, record, report = verify_active_package(
+            self.get_object(),
+            source=data.get("source", SealVerification.Source.ONLINE),
+            actor=data.get("actor", "system"),
+        )
+        return Response(
+            {
+                "package": SealPackageSerializer(package).data,
+                "verification_id": record.id,
+                "report": report.as_dict(),
+            },
+            status=status.HTTP_200_OK
+            if report.result == SealVerification.Result.VALID
+            else status.HTTP_409_CONFLICT,
+        )
+
+    @action(detail=True, methods=["post"], url_path="exports")
+    def exports(self, request, pk=None):
+        """
+        创建并（默认）推进导出任务，产出可离线校验的 tar 包。
+        client_token 幂等：中断后同键重试只续作、产出同一个 bundle。
+        """
+        package = self.get_object()
+        payload = SealExportCreateSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+        data = payload.validated_data
+        job = create_export_job(
+            package,
+            client_token=data["client_token"],
+            actor=data.get("actor", "system"),
+        )
+        interrupted = False
+        if data.get("run", True) and job.status != SealExportJob.Status.COMPLETED:
+            try:
+                job = run_export_job(job.id, fail_after=data.get("fail_after"))
+            except Exception:
+                # fail_after 模拟中断属于预期分支：返回 building 任务供续作
+                job = SealExportJob.objects.get(pk=job.id)
+                if data.get("fail_after"):
+                    interrupted = True
+                else:
+                    raise
+        http = status.HTTP_201_CREATED if not interrupted else status.HTTP_202_ACCEPTED
+        return Response(SealExportJobSerializer(job).data, status=http)
+
+    @action(detail=True, methods=["get"], url_path=r"exports/(?P<job_id>[0-9]+)/download")
+    def export_download(self, request, pk=None, job_id=None):
+        """下载已完成的离线封存 tar 包。"""
+        package = self.get_object()
+        job = SealExportJob.objects.get(pk=job_id, package=package)
+        data = read_bundle_bytes(job)
+        resp = HttpResponse(data, content_type="application/x-tar")
+        resp["Content-Disposition"] = f'attachment; filename="{package.package_no}.tar"'
+        resp["Content-Length"] = str(len(data))
+        resp["X-Bundle-SHA256"] = job.bundle_digest
+        return resp
+
+    @action(detail=True, methods=["get"])
+    def lineage(self, request, pk=None):
+        """追溯详情：沿 parent 链给出首包到当前活动包的完整封存谱系。"""
+        package = self.get_object()
+        chain = []
+        cur = package
+        seen = set()
+        while cur is not None and cur.id not in seen:
+            seen.add(cur.id)
+            chain.append(
+                {
+                    "package_no": cur.package_no,
+                    "package_kind": cur.package_kind,
+                    "status": cur.status,
+                    "is_active": cur.is_active,
+                    "manifest_digest": cur.manifest_digest,
+                    "sealed_at": cur.sealed_at,
+                    "sealed_by": cur.sealed_by,
+                    "legacy_migrated": cur.legacy_migrated,
+                    "relation_note": cur.relation_note,
+                }
+            )
+            cur = cur.parent
+        chain.reverse()
+        children = list(package.children.order_by("id")) if package.is_active else []
+        return Response(
+            {
+                "current": SealPackageBriefSerializer(package).data,
+                "lineage": chain,
+                "newer_packages": [
+                    {
+                        "package_no": c.package_no,
+                        "package_kind": c.package_kind,
+                        "status": c.status,
+                    }
+                    for c in children
+                ],
+            }
+        )
+
+    @action(detail=False, methods=["post"], url_path="offline-verify",
+            parser_classes=[MultiPartParser, FormParser])
+    def offline_verify(self, request):
+        """
+        离线校验：上传导出的 .tar 封存包，在服务端复算全部摘要（算法与
+        verify_offline.py 完全一致），并还原唯一处罚与完整证据视图。
+        该动作不读取/修改任何业务数据。
+        """
+        payload = SealOfflineVerifySerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+        upload = payload.validated_data["bundle"]
+        tar_bytes = upload.read()
+        report, restored = verify_bundle_archive(tar_bytes)
+        return Response(
+            {
+                "report": report.as_dict(),
+                "restored": restored,
+                "actor": payload.validated_data.get("actor", "offline-checker"),
+            },
+            status=status.HTTP_200_OK
+            if report.result == SealVerification.Result.VALID
+            else status.HTTP_409_CONFLICT,
+        )
+
+    @action(detail=False, methods=["post"])
+    def migrate(self, request):
+        """
+        历史数据迁移：为尚无封存包的处罚批量补建 legacy 封存包。
+        幂等可续跑，中断重跑只补缺口，绝不产生第二个活动包。
+        """
+        payload = SealMigrateSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+        data = payload.validated_data
+        result = migrate_legacy_seals(
+            limit=data.get("limit"), actor=data.get("actor", "legacy-migration"),
+        )
+        return Response(result, status=status.HTTP_200_OK)
+
+
+class SealExportJobViewSet(viewsets.mixins.RetrieveModelMixin,
+                          viewsets.mixins.ListModelMixin,
+                          viewsets.GenericViewSet):
+    """导出任务：查询进度、续作（中断重试）。"""
+
+    queryset = SealExportJob.objects.select_related("package").all()
+    serializer_class = SealExportJobSerializer
+    filterset_fields = ["package", "status", "client_token"]
+
+    @action(detail=True, methods=["post"], url_path="run")
+    def run(self, request, pk=None):
+        """续作导出（中断后用同一任务即可，无需新建）。"""
+        payload = SealExportRunSerializer(data=request.data)
+        payload.is_valid(raise_exception=True)
+        job = self.get_object()
+        try:
+            job = run_export_job(job.id, fail_after=payload.validated_data.get("fail_after"))
+        except Exception:
+            if payload.validated_data.get("fail_after"):
+                job = SealExportJob.objects.get(pk=job.id)
+                return Response(SealExportJobSerializer(job).data, status=status.HTTP_202_ACCEPTED)
+            raise
+        return Response(SealExportJobSerializer(job).data)
